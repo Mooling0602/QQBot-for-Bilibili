@@ -1,0 +1,7 @@
+# qqbot2bili 部署镜像（构建时需将 QQBot 与 bilibili-feed-api wheel 一并放入 dist/）
+FROM python:3.12-slim
+ENV TZ=Asia/Shanghai LANG=C.UTF-8
+WORKDIR /app
+COPY dist/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl
+CMD ["python", "-m", "qqbot.main"]

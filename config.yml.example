@@ -1,0 +1,46 @@
+# QQ 机器人配置模板（复制为 config.yml 后填写，config.yml 已被 git 忽略）
+#   cp config.yml.example config.yml
+# 修改后重启机器人生效（scripts/qqbot.sh restart）
+
+# 权限
+permissions:
+  # 显式配置的管理员账号（QQ 号列表）
+  admin_users:
+    # - 123456
+  # 自动识别：true 时群聊内的群主/管理员自动视为管理员（无需配置）
+  auto_admin: true
+
+# NoneBot 驱动
+framework:
+  # fastapi(HTTP 服务) + httpx(HTTP 客户端) + websockets(WebSocket 长连接)
+  driver: "~fastapi+~httpx+~websockets"
+
+# QQ 官方机器人（adapter-qq，保留备用）
+qq_official:
+  # 沙盒模式：true 连沙盒网关（sandbox.api.sgroup.qq.com，仅测试群/私聊）
+  # 正式模式：false 连正式网关（api.sgroup.qq.com）
+  sandbox: false
+  # 机器人列表：[{"id": "AppID", "secret": "AppSecret", "token": "", "intent": {"c2c_group_at_messages": true}}]
+  # 留空 [] 表示禁用官方机器人
+  bots: []
+
+# OneBot v11（NapCat，当前主用）
+onebot:
+  # NapCat WS 连接地址（部署后填写，如 wss://your-domain.com/napcat/ws）
+  ws_urls:
+    - "wss://YOUR_DOMAIN/napcat/ws"
+
+# B 站截图服务（Nginx 公开接口，部署后填写）
+screenshot:
+  url: "https://YOUR_DOMAIN/bili-shot/screenshot"
+
+# 动态推送调试：true 时只记录日志不实际发送
+push_dry_run: false
+# 动态监听总开关：默认关闭，避免首次配置时误发送
+dynamic_monitor: false
+
+# B 站登录态和出口代理（可选；留空时可用 BILI_* 环境变量）
+bilibili:
+  sessdata: ""
+  proxy: ""
+  proxy_auth: []

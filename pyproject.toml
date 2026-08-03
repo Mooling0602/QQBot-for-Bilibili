@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qqbot-for-bilibili"
+version = "0.1.0"
+description = "QQ group bot for Bilibili feed notifications and operations."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "bilibili-feed-api",
+    "nonebot2[fastapi,httpx,websockets]>=2.5.0",
+    "nonebot-adapter-onebot>=2.4.0",
+    "nonebot-adapter-qq>=1.7.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.3",
+]
+
+[tool.uv.sources]
+# Use the public source repository so this project can be built independently.
+bilibili-feed-api = { git = "https://github.com/Mooling0602/bilibili-feed-apis.git" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["qqbot"]

@@ -1,0 +1,17 @@
+# 功能选项定义（根配置，提交到 git）
+# 群配置（config/<群号>/config.yml）可修改的键必须在此定义，否则修改失败
+# 新增功能时在此补充选项（key: {default: 默认值, description: 说明}）
+
+features:
+  dynamic_push:
+    enable: false
+    description: 推送 UP 主动态到本群
+    mids: []
+    prompt: ""  # 提示内容，例如“你关注的up主发送了新的动态～”
+    add_url: false  # 是否附加可访问的 https 直链
+  live_alert:
+    enable: false
+    description: 推送 UP 主开播提醒到本群
+    mids: []
+    prompt: ""  # 提示内容，例如“你关注的up主正在进行直播～”
+    add_url: false  # 是否附加可访问的 https 直链
