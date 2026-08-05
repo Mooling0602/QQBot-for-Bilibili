@@ -2,7 +2,7 @@
 
 基于 NoneBot2 的 QQ 群机器人，用于按群配置哔哩哔哩 UP 主动态推送。当前主通信链路为 NapCat + OneBot v11；QQ 官方适配器仍保留注册和配置入口，但动态推送目前只会选择 OneBot 机器人发送。
 
-项目仍处于开发阶段。当前已经实现动态监听、群级配置和基础管理命令；`features.yml` 中的 `live_alert` 仅为预留配置，直播提醒插件尚未实现。
+项目仍处于开发阶段。当前已经实现动态监听、直播提醒、群级配置和基础管理命令；消息发送链路使用 OneBot v11。
 
 ## 当前功能
 
@@ -13,11 +13,13 @@
 | 帮助和状态命令 | 可用 | 提供 `/帮助`、管理员状态检查和群配置命令 |
 | 动态截图 | 可选 | 调用独立截图服务；未配置或调用失败时自动发送标题和直链 |
 | QQ 官方机器人 | 备用 | 适配器已注册，但当前动态推送发送链路仅支持 OneBot v11 |
-| 开播提醒 | 未实现 | `live_alert` 目前只有配置定义，不会启动监听或发送消息 |
+| 直播提醒 | 可用 | 每 MID 轮询开播状态，支持可选下播提醒；首次观察和新订阅只建立基线 |
 
-## 直播提醒规划
+## 直播提醒
 
-常规的 `live_alert` 将按订阅 MID 轮询直播状态，适用于任意可查询的 UP 主。B 站没有面向普通订阅者、可主动推送任意 UP 主开播事件的官方接口。
+常规的 `live_alert` 按订阅 MID 轮询直播状态，适用于任意可查询的 UP 主。B 站没有面向普通订阅者、可主动推送任意 UP 主开播事件的官方接口。
+
+检测到 `0/2 -> 1` 状态转换后，机器人只在有符合订阅时间条件的群时查询一次直播间详情，再把结果复用于该 MID 的全部群。详情接口临时失败不会阻塞通知：机器人会先发送“提示词 + 当前可取得的标题 + 可选直链”，并按退避重试详情；已发送的开播消息不会重复发送。下播提醒由群级 `notify_on_close` 控制，只会发送给本场已成功收到开播提醒的群，使用缓存的标题、分区和开播时间，以及本地检测到的下播时间。
 
 对于愿意自行授权的主播，可在后续增加独立的官方直播开放平台提供方：开发者应用使用自身的 `app_id` 和密钥，结合该主播提供的 `room_owner_auth_code` 启动官方 WebSocket 会话，接收开播和下播事件。该路径只能覆盖已授权的房间，不能替代普通 MID 订阅；授权码和应用密钥只能作为部署侧运行时机密保存，不能出现在群配置、命令参数或日志中。
 
@@ -32,8 +34,8 @@ QBWorkspace/
 └── bilibili-dynamic-screenshot/
 ```
 
-- `bilibili-feed-apis` 是必需依赖，发行包名为 `bilibili-feed-api`。QQBot 的 `pyproject.toml` 已使用其公开 GitHub 仓库，单独检出 QQBot 也可以运行 `uv sync`。
-- `bilibili-dynamic-screenshot` 是独立 HTTP 服务，不是本项目的 Python 包依赖。只有需要动态卡片图片时才需要单独部署。
+- [bilibili-feed-apis](https://github.com/Mooling0602/bilibili-feed-apis) 是必需依赖，发行包名为 `bilibili-feed-api`。它封装 B 站动态、关注关系和直播间状态的读取与标准化；轮询、群配置和 QQ 投递仍在本仓库。QQBot 的 `pyproject.toml` 已使用其公开 GitHub 仓库，单独检出 QQBot 也可以运行 `uv sync`。
+- [bilibili-dynamic-screenshot](https://github.com/Mooling0602/bilibili-dynamic-screenshot) 是独立 HTTP 截图服务，不是本项目的 Python 包依赖。QQBot 仅在动态推送时调用它生成动态卡片图片；未部署或调用失败时会回退为文字和直链。直播提醒不使用该服务。
 - 如果同时开发 feed API，可在本地保留兄弟 checkout；它不会改变 QQBot 的 Git 源依赖。
 
 ## 运行要求
@@ -103,6 +105,7 @@ ONEBOT_ACCESS_TOKEN=<access-token>
 | `screenshot.url` | 独立截图服务的 `/screenshot` 接口；留空且未设置 `BILI_SCREENSHOT_URL` 时使用文字摘要 |
 | `push_dry_run` | 只记录待发送消息，不实际向 QQ 群发送 |
 | `dynamic_monitor` | 动态监听总开关，默认关闭，修改后需重启 |
+| `live_monitor` | 直播监听总开关，默认关闭，修改后需重启 |
 | `bilibili.sessdata` | 可选 B 站登录态；已关注目标使用 `feed/all`，未关注目标回退 `feed/space` |
 | `bilibili.proxy` | 可选的 B 站请求代理 |
 | `bilibili.proxy_auth` | 代理认证，格式为 `["username", "password"]` |
@@ -147,6 +150,23 @@ ONEBOT_ACCESS_TOKEN=<access-token>
 
 `cache/` 需要持久化，否则重启后会重新建立基线。`push_dry_run` 期间发现的动态同样会写入已见状态，关闭调试后不会补发。启动正式监听前应先确认 OneBot 已连接；当前实现不会自动重试连接未就绪时已经标记为已见的动态。
 
+## 启用直播提醒
+
+直播提醒同样有两级开关：根配置 `config.yml` 的 `live_monitor` 必须为 `true`，群级 `live_alert.enable` 必须开启并配置至少一个 mid。修改根配置后需重启机器人；群级配置会动态生效。
+
+```text
+/群配置 设置 live_alert mids <mid1>,<mid2>
+/群配置 设置 live_alert prompt 你关注的 UP 主正在直播～
+/群配置 设置 live_alert add_url 开
+/群配置 设置 live_alert notify_on_close 开
+/群配置 设置 live_alert prompt_on_close 你关注的 UP 主已经下播了。
+/群配置 设置 live_alert enable 开
+```
+
+首次观察 MID 或首次添加到某个群时只记录基线，不会把已经开始的直播当作新事件。正常情况下每个 MID 每秒查询一次轻量状态接口；同 MID 查询串行，不同 MID 可并行，全部请求均匀限制为每秒最多 10 次。请求失败时按指数退避至最长 64 秒，任意一次成功后恢复一秒间隔。
+
+直播状态缓存为 `cache/live_<mid>.json`，必须与 `cache/seen_<mid>.json` 一同持久化。缓存记录本场已投递的群和待重试的下播消息，因此短暂失去 OneBot 连接不会丢失通知或造成其他群重复推送。直播消息不请求动态截图服务；`add_url` 控制直播间直链是否附加。
+
 ## 命令
 
 | 命令 | 权限 | 行为 |
@@ -154,7 +174,9 @@ ONEBOT_ACCESS_TOKEN=<access-token>
 | `/帮助` | 所有人 | 显示基础帮助 |
 | `@机器人 /检查状态` | 管理员 | 显示版本与发布渠道、启动时间和运行时长 |
 | `/群配置` | 管理员，仅群聊 | 查看当前群的功能配置 |
-| `/群配置 设置 <功能> <字段> <值>` | 管理员，仅群聊 | 修改 `enable`、`mids`、`prompt` 或 `add_url` |
+| `/群配置 设置 <功能> <字段> <值>` | 管理员，仅群聊 | 修改 `enable`、`mids`、`prompt` 或 `add_url`；`live_alert` 额外支持 `notify_on_close` 和 `prompt_on_close` |
+| `@机器人 禁言` 或 `@机器人 /禁言` | 管理员，仅当前群 | 静默本群全部机器人消息，直到重启或恢复服务 |
+| `@机器人 /恢复服务` | 管理员，仅当前群 | 恢复本群机器人消息 |
 
 管理员来自 `permissions.admin_users`，或在 `permissions.auto_admin: true` 时由 OneBot 群角色自动识别。更完整的命令约定见 [命令规范](docs/qqbot-command-spec.md)。
 
@@ -204,6 +226,19 @@ docker run -d --name qqbot-for-bilibili \
 ```
 
 如需从 `.env` 注入令牌，可额外使用 `--env-file /path/to/deploy/.env`。使用正向 WebSocket 时机器人只需要出站连接；使用反向 WebSocket 时还需按部署环境暴露 NoneBot 端口。Podman 可使用等价参数，详细规划见 [QQBot 容器部署说明](docs/qqbot-docker-deploy.md)。
+
+镜像升级前应先以同一镜像运行一次配置迁移器。迁移器必须可写挂载**整个部署目录**，这样首次迁移前的 `config.yml.bak` 和 `features.yml.bak` 会保留在宿主机；主机器人仍保持两个主配置文件只读挂载：
+
+```bash
+podman run --rm --entrypoint python \
+  -v /path/to/deploy:/config:rw \
+  ghcr.io/mooling0602/qqbot-for-bilibili:latest \
+  -m qqbot.core.updater \
+  --config /config/config.yml \
+  --features /config/features.yml
+```
+
+该命令可以在每次升级前重复运行，已有配置值不会被覆盖。部署编排应把它作为主容器启动前的步骤；迁移器失败时不要启动新主容器。已配置该步骤的用户在未来新增兼容字段时无需手动编辑配置。首次部署仍须按模板创建 `config.yml` 和 `features.yml`，并填入自身的连接和凭据。
 
 ## 相关文档
 

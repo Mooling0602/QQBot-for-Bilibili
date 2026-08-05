@@ -9,6 +9,8 @@ from unittest.mock import patch
 import nonebot
 from nonebot.adapters.onebot.v11 import Bot
 
+from qqbot.core import service_mute
+
 nonebot.init()
 
 from qqbot.plugins import dynamic_push
@@ -61,6 +63,7 @@ class DynamicPushTests(unittest.TestCase):
         dynamic_push._screenshot_cache.clear()
         dynamic_push._screenshot_tasks.clear()
         dynamic_push._following_status.clear()
+        service_mute._MUTED_GROUPS.clear()
 
     def test_screenshot_cache_merges_same_dynamic_requests(self) -> None:
         calls = 0
@@ -129,6 +132,18 @@ class DynamicPushTests(unittest.TestCase):
         )
         self.assertEqual(message[0].data["text"], "提示词")
         self.assertEqual(message[1].data["text"], "\n动态标题")
+
+    def test_muted_group_discards_dynamic_notification(self) -> None:
+        bot = FakeBot()
+        service_mute.mute_group("1")
+
+        with patch.object(dynamic_push, "DRY_RUN", False):
+            sent = asyncio.run(
+                dynamic_push._send_to_group(cast(Bot, bot), "1", make_notice(), b"png")
+            )
+
+        self.assertTrue(sent)
+        self.assertEqual(bot.calls, [])
 
     def test_missing_screenshot_forces_dynamic_url(self) -> None:
         bot = FakeBot()

@@ -36,7 +36,9 @@ USAGE = (
     "      /群配置 设置 <键> enable <开/关>\n"
     "      /群配置 设置 <键> mids <mid1,mid2>（合并添加，!mid 删除）\n"
     "      /群配置 设置 <键> prompt <提示文案>\n"
-    "      /群配置 设置 <键> add_url <开/关>"
+    "      /群配置 设置 <键> add_url <开/关>\n"
+    "      /群配置 设置 live_alert notify_on_close <开/关>\n"
+    "      /群配置 设置 live_alert prompt_on_close <提示文案>"
 )
 
 
@@ -47,10 +49,16 @@ def _normalize_feature_value(value: Any, key: str | None = None) -> dict[str, An
     else:
         item = {"enable": bool(value), "mids": []}
     if key:
-        item.setdefault("enable", features.feature_default(key))
-        item.setdefault("mids", list(features.feature_mids(key)))
-        item.setdefault("prompt", features.feature_prompt(key))
-        item.setdefault("add_url", features.feature_add_url(key))
+        for field in (
+            "enable",
+            "mids",
+            "prompt",
+            "add_url",
+            "notify_on_close",
+            "prompt_on_close",
+        ):
+            if features.has_feature_option(key, field):
+                item.setdefault(field, features.feature_option(key, field))
     return item
 
 
@@ -101,12 +109,24 @@ async def handle_group_config(bot: Bot, event: Event) -> None:
                             item["mids"].append(m)
                             # 订阅起点用于过滤添加前的历史动态，不向管理员暴露为可编辑字段。
                             subscribed_at[m] = time.time()
-                if key == "dynamic_push":
+                if key in {"dynamic_push", "live_alert"}:
                     item["mid_subscribed_at"] = subscribed_at
             elif field == "prompt":
+                if not features.has_feature_option(key, field):
+                    await group_cfg_cmd.finish(USAGE)
                 item["prompt"] = value
             elif field == "add_url":
+                if not features.has_feature_option(key, field):
+                    await group_cfg_cmd.finish(USAGE)
                 item["add_url"] = _parse_bool(value)
+            elif field == "notify_on_close":
+                if not features.has_feature_option(key, field):
+                    await group_cfg_cmd.finish(USAGE)
+                item[field] = _parse_bool(value)
+            elif field == "prompt_on_close":
+                if not features.has_feature_option(key, field):
+                    await group_cfg_cmd.finish(USAGE)
+                item[field] = value
             else:
                 await group_cfg_cmd.finish(USAGE)
         except ValueError as e:
@@ -141,5 +161,13 @@ def render_config(group_id: str) -> str:
         lines.append(f"    mids: {'、'.join(mids) if mids else '（无）'}")
         lines.append(f"    prompt: {prompt or '（无）'}")
         lines.append(f"    add_url: {add_url}")
-    lines.append("修改：/群配置 设置 <键> enable/mids/prompt/add_url <值>")
+        if features.has_feature_option(key, "notify_on_close"):
+            close_notify = "开" if item.get("notify_on_close") else "关"
+            close_prompt = item.get("prompt_on_close") or ""
+            lines.append(f"    notify_on_close: {close_notify}")
+            lines.append(f"    prompt_on_close: {close_prompt or '（无）'}")
+    lines.append(
+        "修改：/群配置 设置 <键> enable/mids/prompt/add_url <值>；"
+        "live_alert 额外支持 notify_on_close/prompt_on_close"
+    )
     return "\n".join(lines)

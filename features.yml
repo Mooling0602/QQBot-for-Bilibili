@@ -4,14 +4,16 @@
 
 features:
   dynamic_push:
-    enable: false
+    enable: false  # 发送提醒
     description: 推送 UP 主动态到本群
-    mids: []
+    mids: []  # 订阅列表
     prompt: ""  # 提示内容，例如“你关注的up主发送了新的动态～”
     add_url: false  # 是否附加可访问的 https 直链
   live_alert:
-    enable: false
-    description: 推送 UP 主开播提醒到本群
-    mids: []
+    enable: false  # 发送提醒
+    notify_on_close: false  # 发送下播提醒
+    description: 推送 UP 主直播事件到本群
+    mids: []  # 订阅列表
     prompt: ""  # 提示内容，例如“你关注的up主正在进行直播～”
+    prompt_on_close: ""  # 提示内容，例如“你关注的up主已经下播了。”
     add_url: false  # 是否附加可访问的 https 直链

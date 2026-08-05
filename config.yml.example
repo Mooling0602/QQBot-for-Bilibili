@@ -2,6 +2,9 @@
 #   cp config.yml.example config.yml
 # 修改后重启机器人生效（scripts/qqbot.sh restart）
 
+# 配置版本（不要手动修改该选项！）
+version: 0.2.0
+
 # 权限
 permissions:
   # 显式配置的管理员账号（QQ 号列表）
@@ -38,6 +41,8 @@ screenshot:
 push_dry_run: false
 # 动态监听总开关：默认关闭，避免首次配置时误发送
 dynamic_monitor: false
+# 直播监听总开关：默认关闭，独立于群级 live_alert.enable
+live_monitor: false
 
 # B 站登录态和出口代理（可选；留空时可用 BILI_* 环境变量）
 bilibili:

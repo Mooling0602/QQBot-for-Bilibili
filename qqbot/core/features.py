@@ -5,7 +5,10 @@
 """
 
 import logging
+import os
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -15,6 +18,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def find_features_path() -> Path:
+    env_path = os.getenv("QQBOT_FEATURES")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
     cwd_config = Path.cwd() / "features.yml"
     if cwd_config.exists():
         return cwd_config
@@ -56,9 +62,23 @@ def feature_default(key: str):
     return _FEATURES.get(key, {}).get("enable")
 
 
+def feature_option(key: str, field: str, default: Any = None) -> Any:
+    """Return a copy of a configurable feature field's default value."""
+    item = _FEATURES.get(key, {})
+    if not isinstance(item, dict) or field not in item:
+        return deepcopy(default)
+    return deepcopy(item[field])
+
+
+def has_feature_option(key: str, field: str) -> bool:
+    item = _FEATURES.get(key, {})
+    return isinstance(item, dict) and field in item
+
+
 def feature_mids(key: str) -> list:
     """键的默认 B 站 mid 列表（mids）。"""
-    return _FEATURES.get(key, {}).get("mids", [])
+    mids = feature_option(key, "mids", [])
+    return mids if isinstance(mids, list) else []
 
 
 def feature_description(key: str) -> str:

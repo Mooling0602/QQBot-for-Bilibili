@@ -46,6 +46,11 @@ def _check_admin(event: Event) -> bool:
     return is_admin(event.get_user_id(), _event_role(event))
 
 
+def is_admin_event(event: Event) -> bool:
+    """Return whether an event sender is a configured administrator."""
+    return _check_admin(event)
+
+
 def admin_only() -> Permission:
     """管理员专属命令权限规则（静默拒绝）。"""
 

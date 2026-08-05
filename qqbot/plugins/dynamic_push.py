@@ -24,7 +24,9 @@ from qqbot.core.group_config import (
     load_group_config,
     save_group_config,
 )
+from qqbot.core.onebot import get_onebot_bot
 from qqbot.core.screenshot import fetch_dynamic_screenshot
+from qqbot.core.service_mute import is_group_muted
 
 driver = get_driver()
 
@@ -259,6 +261,9 @@ async def _send_to_group(
     screenshot: bytes | None,
 ) -> bool:
     """发送完整动态消息；没有截图时强制附加直链。"""
+    if is_group_muted(group_id):
+        logger.info(f"群 {group_id} 已静默，跳过动态 {notice.dynamic_id} 推送")
+        return True
     if not _group_still_subscribes(group_id, notice.mid):
         return True
 
@@ -297,6 +302,9 @@ async def _send_to_group(
 
 async def _send_parse_error(bot: Bot, group_id: str, dynamic_id: str) -> bool:
     """对可判定为订阅后新动态、但内容无法解析的情况作一次简短提示。"""
+    if is_group_muted(group_id):
+        logger.info(f"群 {group_id} 已静默，跳过动态 {dynamic_id} 解析错误通知")
+        return True
     if DRY_RUN:
         logger.info(f"[dry-run] 群 {group_id} 动态 {dynamic_id} 内容解析失败")
         return True
@@ -537,15 +545,7 @@ async def _poll_loop() -> None:
 
 def _pick_bot() -> Bot | None:
     """取一个已连接的 OneBot 机器人。"""
-    try:
-        from nonebot import get_bots
-
-        for bot in get_bots().values():
-            if bot.type == "OneBot V11" or "OneBot" in str(bot.type):
-                return bot  # type: ignore
-    except Exception as error:  # noqa: BLE001
-        logger.warning(f"获取 OneBot 连接状态失败: {error}")
-    return None
+    return get_onebot_bot()
 
 
 @driver.on_startup

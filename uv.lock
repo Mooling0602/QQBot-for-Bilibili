@@ -41,7 +41,7 @@ wheels = [
 [[package]]
 name = "bilibili-feed-api"
 version = "0.1.0"
-source = { git = "https://github.com/Mooling0602/bilibili-feed-apis.git#599e444f6e1a706e299d3adb6336fab59e73b6ff" }
+source = { git = "https://github.com/Mooling0602/bilibili-feed-apis.git#31c86a1d43eb67798e77a3de8dcbce4915f394e5" }
 dependencies = [
     { name = "curl-cffi" },
     { name = "httpx" },

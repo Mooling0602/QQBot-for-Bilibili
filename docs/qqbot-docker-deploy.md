@@ -57,6 +57,19 @@ scp -r cache/ → <部署目录>/cache/   # seen 状态，避免重启漏推
 
 ## 四、容器运行参数
 
+每次使用新镜像重建主容器前，先运行配置迁移器。这里挂载整个部署目录而不是单个文件，确保 `.bak` 备份也写回宿主机；迁移失败时保留旧主容器，不继续重建：
+
+```bash
+podman run --rm --entrypoint python \
+  -v <部署目录>:/config:rw \
+  localhost/qqbot2bili:latest \
+  -m qqbot.core.updater \
+  --config /config/config.yml \
+  --features /config/features.yml
+```
+
+该迁移器只添加新字段、保留自定义值，可在每次部署前重复执行。部署编排应将它作为主容器启动前的强制步骤，因此旧用户和以后首次部署的用户在发生后续配置升级时都不需要手动补新增字段。首次部署仍需要按模板准备两个配置文件。
+
 ```bash
 podman run -d --name qqbot2bili --restart=always \
   -e TZ=Asia/Shanghai \
@@ -74,8 +87,9 @@ podman run -d --name qqbot2bili --restart=always \
 
 1. GitHub Actions 完成后，在服务器拉取指定的 `latest` 或 commit SHA 镜像。
 2. 确认宿主机 `config.yml`、`features.yml`、`config/` 和 `cache/` 已存在并可写。
-3. 停止旧的 `qqbot2bili`，使用相同挂载重新创建容器；不要删除业务目录或容器卷。
-4. 验证日志显示 OneBot 连接成功和动态轮询任务启动。
+3. 使用新镜像运行上方的配置迁移器；它失败时不要停止旧容器或启动新容器。
+4. 停止旧的 `qqbot2bili`，使用相同只读主配置挂载重新创建容器；不要删除业务目录或容器卷。
+5. 验证日志显示 OneBot 连接成功、动态轮询任务和按配置启用的直播轮询任务启动。
 5. 需要回滚时，改用之前记录的 commit SHA 标签重新创建容器。
 
 ## 六、风险与注意
