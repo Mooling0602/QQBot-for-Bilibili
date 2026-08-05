@@ -10,6 +10,7 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+__VERSION__ = "0.1.1"
 DIST_NAME = "qqbot-for-bilibili"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -38,7 +39,7 @@ def get_base_version() -> str:
     try:
         return version(DIST_NAME)
     except PackageNotFoundError:
-        return "0.0.0"
+        return __VERSION__
 
 
 @lru_cache(maxsize=1)
