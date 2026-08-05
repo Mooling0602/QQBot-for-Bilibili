@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["*"]
   pull_request:
   workflow_dispatch:
 
@@ -34,7 +35,15 @@ jobs:
         run: uv build --wheel --out-dir dist
 
   image:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/tags/') ||
+      (!startsWith(github.event.head_commit.message, 'ci:') &&
+      !startsWith(github.event.head_commit.message, 'ci(') &&
+      !startsWith(github.event.head_commit.message, 'docs:') &&
+      !startsWith(github.event.head_commit.message, 'docs(') &&
+      !startsWith(github.event.head_commit.message, 'chore:') &&
+      !startsWith(github.event.head_commit.message, 'chore(')))
     needs: test-build
     runs-on: ubuntu-latest
     permissions:
@@ -44,10 +53,34 @@ jobs:
       - name: Check out QQBot source
         uses: actions/checkout@v4
 
+      - name: Read locked feed API revision
+        id: feed-api
+        shell: bash
+        run: |
+          revision="$(python - <<'PY'
+          import tomllib
+
+          with open("uv.lock", "rb") as lock_file:
+              packages = tomllib.load(lock_file).get("package", [])
+          for package in packages:
+              if package.get("name") != "bilibili-feed-api":
+                  continue
+              source = package.get("source", {}).get("git", "")
+              if "#" not in source:
+                  raise SystemExit("bilibili-feed-api is not locked to a Git revision")
+              print(source.rsplit("#", 1)[1])
+              break
+          else:
+              raise SystemExit("bilibili-feed-api is missing from uv.lock")
+          PY
+          )"
+          echo "revision=${revision}" >> "$GITHUB_OUTPUT"
+
       - name: Check out feed API source
         uses: actions/checkout@v4
         with:
           repository: Mooling0602/bilibili-feed-apis
+          ref: ${{ steps.feed-api.outputs.revision }}
           path: bilibili-feed-apis
 
       - name: Set up uv
@@ -70,12 +103,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Select image tags
+        id: image-tags
+        shell: bash
+        env:
+          IMAGE: ghcr.io/mooling0602/qqbot-for-bilibili
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tags="${IMAGE}:${GITHUB_REF_NAME}"$'\n'"${IMAGE}:stable"
+          else
+            tags="${IMAGE}:${GITHUB_SHA:0:7}"$'\n'"${IMAGE}:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.qqbot
           push: true
-          tags: |
-            ghcr.io/mooling0602/qqbot-for-bilibili:latest
-            ghcr.io/mooling0602/qqbot-for-bilibili:${{ github.sha }}
+          tags: ${{ steps.image-tags.outputs.tags }}
