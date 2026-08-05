@@ -36,6 +36,7 @@ admin_cmd = on_command("示例", rule=to_me(), permission=admin_only(), ...)
 ```python
 from qqbot.core.permissions import ensure_admin
 
+
 @admin_cmd.handle()
 async def handler(event: Event):
     await ensure_admin(event, admin_cmd)  # 无权限时回复提示并中断

@@ -123,7 +123,9 @@ class DynamicPushTests(unittest.TestCase):
             )
 
         message = bot.calls[0]["message"]
-        self.assertEqual([segment.type for segment in message], ["text", "text", "image"])
+        self.assertEqual(
+            [segment.type for segment in message], ["text", "text", "image"]
+        )
         self.assertEqual(message[0].data["text"], "提示词")
         self.assertEqual(message[1].data["text"], "\n动态标题")
 
@@ -138,12 +140,16 @@ class DynamicPushTests(unittest.TestCase):
         ):
             self.assertTrue(
                 asyncio.run(
-                    dynamic_push._send_to_group(cast(Bot, bot), "1", make_notice(), None)
+                    dynamic_push._send_to_group(
+                        cast(Bot, bot), "1", make_notice(), None
+                    )
                 )
             )
 
         message = bot.calls[0]["message"]
-        self.assertEqual([segment.type for segment in message], ["text", "text", "text"])
+        self.assertEqual(
+            [segment.type for segment in message], ["text", "text", "text"]
+        )
         self.assertEqual(message[2].data["text"], "\nhttps://t.bilibili.com/100")
 
     def test_source_selection_without_sessdata_uses_feed_space(self) -> None:

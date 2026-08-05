@@ -332,9 +332,7 @@ async def _resolve_dynamic_sources(
     if to_check:
         await asyncio.gather(*(check_following(mid) for mid in to_check))
 
-    feed_all_mids = [
-        mid for mid in normalized_mids if _following_status[mid].follows
-    ]
+    feed_all_mids = [mid for mid in normalized_mids if _following_status[mid].follows]
     feed_space_mids = [
         mid for mid in normalized_mids if not _following_status[mid].follows
     ]
@@ -486,9 +484,7 @@ async def _poll_loop() -> None:
                     )
                     tasks = [
                         _process_mid(
-                            feed_all_watcher
-                            if mid in feed_all_mids
-                            else space_watcher,
+                            feed_all_watcher if mid in feed_all_mids else space_watcher,
                             mid,
                             items,
                         )
