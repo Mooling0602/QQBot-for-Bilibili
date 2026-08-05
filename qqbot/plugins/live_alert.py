@@ -14,7 +14,7 @@ from bilibili_feed_api import (
     get_live_status,
 )
 from nonebot import get_driver, logger
-from nonebot.adapters.onebot.v11 import Bot, Message
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
 
 from qqbot.core import features
 from qqbot.core.config import CONFIG
@@ -194,6 +194,8 @@ def _open_message(group_id: str, session: LiveSession) -> Message:
         message += Message(f"\n分区：{area}")
     if session.live_time:
         message += Message(f"\n开播时间：{session.live_time}")
+    if session.cover_url:
+        message += MessageSegment.image(session.cover_url)
     if item.get("add_url", features.feature_add_url(FEATURE_KEY)) and (
         url := _room_url(session)
     ):
@@ -278,6 +280,7 @@ def _session_from_status(
         room_id=status.room_id,
         opened_at=now,
         title=status.title,
+        cover_url=status.cover_url,
         detail_retry_at=now if targets and status.room_id else None,
         open_targets=targets,
     )
@@ -285,6 +288,7 @@ def _session_from_status(
 
 def _apply_details(session: LiveSession, status: LiveStatus) -> None:
     session.title = status.title or session.title
+    session.cover_url = status.cover_url or session.cover_url
     session.live_time = status.live_time
     session.area_name = status.area_name
     session.parent_area_name = status.parent_area_name

@@ -48,6 +48,7 @@ class LiveSession:
     room_id: int | None
     opened_at: float
     title: str
+    cover_url: str | None = None
     live_time: str | None = None
     area_name: str | None = None
     parent_area_name: str | None = None
@@ -65,6 +66,7 @@ class LiveSession:
             "room_id": self.room_id,
             "opened_at": self.opened_at,
             "title": self.title,
+            "cover_url": self.cover_url,
             "live_time": self.live_time,
             "area_name": self.area_name,
             "parent_area_name": self.parent_area_name,
@@ -91,6 +93,7 @@ class LiveSession:
             room_id=_optional_int(value.get("room_id")),
             opened_at=opened_at,
             title=_optional_str(value.get("title")) or "",
+            cover_url=_optional_str(value.get("cover_url")),
             live_time=_optional_str(value.get("live_time")),
             area_name=_optional_str(value.get("area_name")),
             parent_area_name=_optional_str(value.get("parent_area_name")),

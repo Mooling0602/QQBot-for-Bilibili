@@ -31,6 +31,7 @@ def make_status(
     live_time: str | None = None,
     area_name: str | None = None,
     parent_area_name: str | None = None,
+    cover_url: str | None = None,
 ) -> LiveStatus:
     return LiveStatus(
         mid="42",
@@ -40,7 +41,7 @@ def make_status(
         live_time=live_time,
         area_name=area_name,
         parent_area_name=parent_area_name,
-        cover_url=None,
+        cover_url=cover_url,
     )
 
 
@@ -80,6 +81,7 @@ class LiveAlertTests(unittest.TestCase):
                 live_time="2026-08-05 18:23:00",
                 area_name="萌宅领域",
                 parent_area_name="娱乐",
+                cover_url="https://example.test/cover.jpg",
             )
 
         subscriptions = [
@@ -104,12 +106,17 @@ class LiveAlertTests(unittest.TestCase):
         self.assertEqual(detail_calls, [100])
         self.assertEqual(len(bot.calls), 2)
         self.assertEqual(
-            str(bot.calls[0]["message"]),
-            "你关注的 UP 主正在直播～\n详细标题\n分区：娱乐 / 萌宅领域\n开播时间：2026-08-05 18:23:00\nhttps://live.bilibili.com/100",
+            [segment.type for segment in bot.calls[0]["message"]],
+            ["text", "text", "text", "text", "image", "text"],
+        )
+        self.assertEqual(
+            bot.calls[0]["message"][4].data["file"],
+            "https://example.test/cover.jpg",
         )
         assert state is not None
         assert state.active is not None
         self.assertEqual(state.active.session_id, "100:2026-08-05 18:23:00")
+        self.assertEqual(state.active.cover_url, "https://example.test/cover.jpg")
         self.assertEqual(state.active.open_sent, ["1", "2"])
 
     def test_detail_failure_sends_basic_message_then_retries_without_duplicate(
