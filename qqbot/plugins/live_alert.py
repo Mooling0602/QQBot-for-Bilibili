@@ -219,6 +219,8 @@ def _close_message(group_id: str, session: LiveSession) -> Message:
         message += Message(f"\n开播时间：{session.live_time}")
     if closed_at := _format_timestamp(session.closed_at):
         message += Message(f"\n下播时间：{closed_at}")
+    if session.cover_url:
+        message += MessageSegment.image(session.cover_url)
     if item.get("add_url", features.feature_add_url(FEATURE_KEY)) and (
         url := _room_url(session)
     ):

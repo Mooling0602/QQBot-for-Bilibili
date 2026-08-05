@@ -165,6 +165,7 @@ class LiveAlertTests(unittest.TestCase):
             room_id=100,
             opened_at=10,
             title="直播标题",
+            cover_url="https://example.test/cover.jpg",
             live_time="2026-08-05 18:23:00",
             open_sent=["1"],
         )
@@ -196,7 +197,10 @@ class LiveAlertTests(unittest.TestCase):
             state = store.load("42")
 
         self.assertEqual(len(bot.calls), 1)
-        self.assertIn("下播时间：", str(bot.calls[0]["message"]))
+        message = bot.calls[0]["message"]
+        self.assertIn("下播时间：", str(message))
+        self.assertEqual([segment.type for segment in message][-1], "image")
+        self.assertEqual(message[-1].data["file"], "https://example.test/cover.jpg")
         assert state is not None
         self.assertEqual(state.closing, [])
 
