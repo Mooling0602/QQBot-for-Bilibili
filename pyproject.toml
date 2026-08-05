@@ -19,6 +19,12 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.16.1",
+    "ty>=0.0.65",
+]
+
 [tool.uv.sources]
 # Use the public source repository so this project can be built independently.
 bilibili-feed-api = { git = "https://github.com/Mooling0602/bilibili-feed-apis.git" }
