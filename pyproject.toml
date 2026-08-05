@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qqbot-for-bilibili"
-version = "0.1.0"
+version = "0.1.1"
 description = "QQ group bot for Bilibili feed notifications and operations."
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -8,7 +8,7 @@ from nonebot.adapters import Bot, Event
 from nonebot.rule import to_me
 
 from qqbot.core.permissions import admin_only
-from qqbot.core.version import get_version
+from qqbot.core.version import get_status_version
 
 START_TIME = time.time()
 # 由容器或宿主机的 TZ 环境变量决定；无本地时区信息时才退回 Asia/Shanghai。
@@ -44,7 +44,7 @@ def _format_uptime() -> str:
 @check_status.handle()
 async def handle_check_status(bot: Bot, event: Event) -> None:
     await check_status.finish(
-        f"版本：v{get_version()}\n"
+        f"版本：{get_status_version()}\n"
         f"最近启动时间：{_format_start_time()}\n"
         f"已运行：{_format_uptime()}\n"
         f"当前服务状态正常"

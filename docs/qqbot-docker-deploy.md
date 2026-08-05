@@ -28,10 +28,15 @@ RUN pip install --no-cache-dir /tmp/*.whl
 CMD ["python", "-m", "qqbot.main"]
 ```
 
-- GitHub Actions 在 `main` 分支构建 QQBot 和 `bilibili-feed-api` wheel，再打包并推送 `ghcr.io/mooling0602/qqbot-for-bilibili`。
-- 镜像同时推送 `latest` 和 commit SHA 标签；生产部署应记录实际使用的 SHA，便于回滚。
+- GitHub Actions 会构建 QQBot 和 `bilibili-feed-api` wheel，再打包并推送 `ghcr.io/mooling0602/qqbot-for-bilibili`。
+- 普通 `main` 构建推送 `latest` 与短 commit SHA 标签；Git tag 或手动选择稳定版时还推送版本号与 `stable`。生产部署应记录实际使用的版本或 SHA，便于回滚。
 - 本地或离线构建仍可执行 `uv build --wheel --out-dir dist`，将两个 wheel 放在同一个 `dist/` 后再运行 `podman build`。
-- 版本显示：容器内无 .git → 显示纯版本号（符合构建产物规范）
+- 版本显示：tag 构建会将版本 tag 写入镜像的 `QQBOT_RELEASE_TAG`，`/检查状态` 显示
+  `(stable)`；普通分支镜像显示 `(git)`。手工部署可覆盖该环境变量，但其值必须与安装包
+  版本一致才会显示稳定版。
+- 手动运行 GitHub Actions 的 CI 时，可勾选 `stable` 输入。工作流会从 `pyproject.toml`
+  读取版本号，并发布该版本号、`stable` 和 `latest` 三个标签；未勾选时仍发布短 SHA 与
+  `latest`。
 
 ## 三、挂载与配置迁移（无缝迁移核心）
 

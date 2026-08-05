@@ -6,6 +6,12 @@ on:
     tags: ["*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      stable:
+        description: Build and publish this revision as the stable release
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -35,7 +41,7 @@ jobs:
         run: uv build --wheel --out-dir dist
 
   image-gate:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: test-build
     runs-on: ubuntu-latest
     outputs:
@@ -52,6 +58,11 @@ jobs:
         env:
           HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -137,16 +148,23 @@ jobs:
         shell: bash
         env:
           IMAGE: ghcr.io/mooling0602/qqbot-for-bilibili
+          BUILD_STABLE: ${{ inputs.stable }}
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             tags="${IMAGE}:${GITHUB_REF_NAME}"$'\n'"${IMAGE}:stable"$'\n'"${IMAGE}:latest"
+            release_tag="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$BUILD_STABLE" == "true" ]]; then
+            release_tag="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+            tags="${IMAGE}:${release_tag}"$'\n'"${IMAGE}:stable"$'\n'"${IMAGE}:latest"
           else
             tags="${IMAGE}:${GITHUB_SHA:0:7}"$'\n'"${IMAGE}:latest"
+            release_tag=""
           fi
           {
             echo "tags<<EOF"
             echo "$tags"
             echo "EOF"
+            echo "release_tag=${release_tag}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
@@ -156,3 +174,5 @@ jobs:
           file: docker/Dockerfile.qqbot
           push: true
           tags: ${{ steps.image-tags.outputs.tags }}
+          build-args: |
+            QQBOT_RELEASE_TAG=${{ steps.image-tags.outputs.release_tag }}

@@ -1,10 +1,10 @@
-"""版本号：安装元数据版本 + git commit 短 hash。
+"""版本与发布渠道判定。
 
-显示格式：
-- 源码运行：<版本>-<commit短hash>（如 0.1.0-a7d65ce）
-- 构建产物（release 打包）：仅 <版本>（如 0.1.0），不显示 hash
+源码工作区始终优先显示 HEAD 的短 hash；发布镜像没有 ``.git``，由 CI 在
+tag 构建时注入 ``QQBOT_RELEASE_TAG``。只有该值与安装包版本一致时才是稳定版。
 """
 
+import os
 import subprocess
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
@@ -33,11 +33,28 @@ def _git_commit() -> str | None:
 
 
 @lru_cache(maxsize=1)
-def get_version() -> str:
-    """完整版本号：源码运行 0.1.0-<hash>，构建产物 0.1.0。"""
+def get_base_version() -> str:
+    """从安装元数据读取基础版本号。"""
     try:
-        base = version(DIST_NAME)
+        return version(DIST_NAME)
     except PackageNotFoundError:
-        base = "0.0.0"
+        return "0.0.0"
+
+
+@lru_cache(maxsize=1)
+def get_version() -> str:
+    """完整版本号：源码运行追加 HEAD 短 hash，构建产物只显示基础版本。"""
+    base = get_base_version()
     commit = _git_commit()
     return f"{base}-{commit}" if commit else base
+
+
+def get_status_version() -> str:
+    """返回供状态命令展示的版本与发布渠道。"""
+    base = get_base_version()
+    commit = _git_commit()
+    if commit:
+        return f"v{base} (git: {commit})"
+    if os.getenv("QQBOT_RELEASE_TAG") == base:
+        return f"v{base} (stable)"
+    return f"v{base} (git)"
