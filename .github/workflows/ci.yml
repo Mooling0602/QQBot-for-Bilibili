@@ -110,7 +110,7 @@ jobs:
           IMAGE: ghcr.io/mooling0602/qqbot-for-bilibili
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            tags="${IMAGE}:${GITHUB_REF_NAME}"$'\n'"${IMAGE}:stable"
+            tags="${IMAGE}:${GITHUB_REF_NAME}"$'\n'"${IMAGE}:stable"$'\n'"${IMAGE}:latest"
           else
             tags="${IMAGE}:${GITHUB_SHA:0:7}"$'\n'"${IMAGE}:latest"
           fi
