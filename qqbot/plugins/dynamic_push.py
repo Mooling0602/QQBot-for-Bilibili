@@ -5,6 +5,7 @@ import base64
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bilibili_feed_api import (
@@ -32,6 +33,7 @@ DEFAULT_PROMPT = "你关注的 UP 主发布了新动态～"
 DYNAMIC_URL = "https://t.bilibili.com/{id}"
 SCREENSHOT_CACHE_MAX_ITEMS = 128
 FOLLOWING_RECHECK_SEC = 600
+LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone(timedelta(hours=8))
 
 # dry-run：只记录日志不实际发送（调试用）
 DRY_RUN = bool(CONFIG.get("push_dry_run", False))
@@ -193,6 +195,31 @@ def _candidate_id(item: dict) -> str:
     return str(item.get("id_str") or "").strip()
 
 
+def _format_published_at(
+    published_at: float, *, now: datetime | None = None
+) -> str | None:
+    """Render a dynamic publication time in the deployment's local timezone."""
+    try:
+        published = datetime.fromtimestamp(published_at, tz=LOCAL_TZ)
+        local_now = (
+            now.astimezone(LOCAL_TZ) if now is not None else datetime.now(LOCAL_TZ)
+        )
+        days_ago = (local_now.date() - published.date()).days
+    except (OverflowError, OSError, ValueError) as error:
+        logger.warning(f"动态发布时间格式化失败（{published_at}）: {error}")
+        return None
+
+    if days_ago == 0:
+        day = "今天"
+    elif days_ago == 1:
+        day = "昨天"
+    elif days_ago == 2:
+        day = "前天"
+    else:
+        day = f"{published.year}年{published.month:02d}月{published.day:02d}日"
+    return f"{day} {published.hour:02d}:{published.minute:02d}"
+
+
 async def _get_screenshot(dynamic_id: str) -> bytes:
     """获取同一动态的共享截图，合并并发请求并保留有限的内存缓存。"""
     async with _screenshot_lock:
@@ -249,7 +276,11 @@ async def _send_to_group(
         message += MessageSegment.image(
             f"base64://{base64.b64encode(screenshot).decode()}"
         )
-    if add_url or screenshot is None:
+    if screenshot is None:
+        if published_at := _format_published_at(notice.published_at):
+            message += Message(f"\n发布时间：{published_at}")
+        message += Message(f"\n{notice.url}")
+    elif add_url:
         message += Message(f"\n{notice.url}")
 
     if DRY_RUN:

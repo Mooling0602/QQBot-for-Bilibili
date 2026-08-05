@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -137,6 +138,57 @@ class DynamicPushTests(unittest.TestCase):
             patch.object(dynamic_push, "_group_still_subscribes", return_value=True),
             patch.object(dynamic_push, "_group_item", return_value=config),
             patch.object(dynamic_push, "DRY_RUN", False),
+            patch.object(
+                dynamic_push, "_format_published_at", return_value="今天 18:23"
+            ),
+        ):
+            self.assertTrue(
+                asyncio.run(
+                    dynamic_push._send_to_group(
+                        cast(Bot, bot), "1", make_notice(), None
+                    )
+                )
+            )
+
+        message = bot.calls[0]["message"]
+        self.assertEqual(
+            [segment.type for segment in message], ["text", "text", "text", "text"]
+        )
+        self.assertEqual(message[2].data["text"], "\n发布时间：今天 18:23")
+        self.assertEqual(message[3].data["text"], "\nhttps://t.bilibili.com/100")
+
+    def test_format_published_at_uses_relative_days_and_minutes(self) -> None:
+        now = datetime(2026, 8, 5, 18, 30, tzinfo=timezone.utc)
+
+        def timestamp(days_ago: int) -> float:
+            return (now - timedelta(days=days_ago, minutes=7)).timestamp()
+
+        with patch.object(dynamic_push, "LOCAL_TZ", timezone.utc):
+            self.assertEqual(
+                dynamic_push._format_published_at(timestamp(0), now=now), "今天 18:23"
+            )
+            self.assertEqual(
+                dynamic_push._format_published_at(timestamp(1), now=now), "昨天 18:23"
+            )
+            self.assertEqual(
+                dynamic_push._format_published_at(timestamp(2), now=now), "前天 18:23"
+            )
+            self.assertEqual(
+                dynamic_push._format_published_at(timestamp(3), now=now),
+                "2026年08月02日 18:23",
+            )
+
+    def test_missing_screenshot_still_sends_url_when_time_formatting_fails(
+        self,
+    ) -> None:
+        bot = FakeBot()
+        config = {"enable": True, "mids": ["42"], "prompt": "提示词", "add_url": False}
+
+        with (
+            patch.object(dynamic_push, "_group_still_subscribes", return_value=True),
+            patch.object(dynamic_push, "_group_item", return_value=config),
+            patch.object(dynamic_push, "DRY_RUN", False),
+            patch.object(dynamic_push, "_format_published_at", return_value=None),
         ):
             self.assertTrue(
                 asyncio.run(
