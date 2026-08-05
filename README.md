@@ -207,7 +207,7 @@ ghcr.io/mooling0602/bilibili-dynamic-screenshot:latest
 ```bash
 uv build --wheel --out-dir dist .
 uv build --wheel --out-dir dist /path/to/bilibili-feed-apis
-docker build -f docker/Dockerfile.qqbot -t qqbot-for-bilibili:0.1.0 .
+docker build -f docker/Dockerfile.qqbot -t qqbot-for-bilibili:0.2.0 .
 ```
 
 服务器部署优先拉取 GHCR 镜像；需要回滚时使用 Actions 推送的 commit SHA 标签，而不是覆盖宿主机业务数据。
@@ -222,7 +222,7 @@ docker run -d --name qqbot-for-bilibili \
   -v /path/to/deploy/features.yml:/app/features.yml:ro \
   -v /path/to/deploy/config:/app/config \
   -v /path/to/deploy/cache:/app/cache \
-  qqbot-for-bilibili:0.1.0
+  qqbot-for-bilibili:0.2.0
 ```
 
 如需从 `.env` 注入令牌，可额外使用 `--env-file /path/to/deploy/.env`。使用正向 WebSocket 时机器人只需要出站连接；使用反向 WebSocket 时还需按部署环境暴露 NoneBot 端口。Podman 可使用等价参数，详细规划见 [QQBot 容器部署说明](docs/qqbot-docker-deploy.md)。

@@ -10,7 +10,7 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-__VERSION__ = "0.1.1"
+__VERSION__ = "0.2.0"
 DIST_NAME = "qqbot-for-bilibili"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
