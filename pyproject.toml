@@ -11,6 +11,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "bilibili-feed-api",
+    "httpx>=0.28.1",
     "nonebot2[fastapi,httpx,websockets]>=2.5.0",
     "nonebot-adapter-onebot>=2.4.0",
     "nonebot-adapter-qq>=1.7.0",

@@ -10,6 +10,8 @@
 """
 
 import re
+import time
+from typing import Any
 
 from nonebot import on_command
 from nonebot.adapters import Bot, Event
@@ -38,10 +40,10 @@ USAGE = (
 )
 
 
-def _normalize_feature_value(value, key: str | None = None):
+def _normalize_feature_value(value: Any, key: str | None = None) -> dict[str, Any]:
     """兼容旧数据：bool 值转为 {enable, mids, prompt, add_url} 结构。"""
     if isinstance(value, dict):
-        item = dict(value)
+        item: dict[str, Any] = dict(value)
     else:
         item = {"enable": bool(value), "mids": []}
     if key:
@@ -77,6 +79,12 @@ async def handle_group_config(bot: Bot, event: Event) -> None:
             if field == "enable":
                 item["enable"] = _parse_bool(value)
             elif field == "mids":
+                raw_subscribed_at = item.get("mid_subscribed_at") or {}
+                subscribed_at = (
+                    dict(raw_subscribed_at)
+                    if isinstance(raw_subscribed_at, dict)
+                    else {}
+                )
                 for m in value.split(","):
                     m = m.strip()
                     if not m:
@@ -86,10 +94,15 @@ async def handle_group_config(bot: Bot, event: Event) -> None:
                         target = m[1:]
                         if target in item["mids"]:
                             item["mids"].remove(target)
+                        subscribed_at.pop(target, None)
                     else:
                         # 合并添加（去重）
                         if m not in item["mids"]:
                             item["mids"].append(m)
+                            # 订阅起点用于过滤添加前的历史动态，不向管理员暴露为可编辑字段。
+                            subscribed_at[m] = time.time()
+                if key == "dynamic_push":
+                    item["mid_subscribed_at"] = subscribed_at
             elif field == "prompt":
                 item["prompt"] = value
             elif field == "add_url":
@@ -100,9 +113,7 @@ async def handle_group_config(bot: Bot, event: Event) -> None:
             await group_cfg_cmd.finish(f"配置失败：{key} {field} {e}")
         data[key] = item
         save_group_config(group_id, data)
-        await group_cfg_cmd.finish(
-            f"已设置：{key} {field} = {item[field]}"
-        )
+        await group_cfg_cmd.finish(f"已设置：{key} {field} = {item[field]}")
     else:
         await group_cfg_cmd.finish(USAGE)
 

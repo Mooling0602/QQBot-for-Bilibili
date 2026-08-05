@@ -33,9 +33,7 @@ def is_admin(user_id: str | int, role: str | None = None) -> bool:
     """
     if str(user_id) in {str(u) for u in ADMIN_USERS}:
         return True
-    if AUTO_ADMIN and role in _ADMIN_ROLES:
-        return True
-    return False
+    return bool(AUTO_ADMIN and role in _ADMIN_ROLES)
 
 
 def _event_role(event: Event) -> str | None:

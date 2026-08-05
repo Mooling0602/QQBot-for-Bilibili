@@ -22,7 +22,7 @@ _cwd_env = Path.cwd() / ".env"
 _repo_env = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_cwd_env if _cwd_env.exists() else _repo_env)
 
-from qqbot.core.config import CONFIG  # noqa: E402
+from qqbot.core.config import CONFIG
 
 
 def _inject_framework_config() -> None:
@@ -48,15 +48,19 @@ _inject_framework_config()
 # uv 自带的 Python 默认不加载系统 CA（cafile=None），
 # 若系统默认 CA 文件缺失，显式指定常见路径，避免 SSL 验证失败。
 if not os.environ.get("SSL_CERT_FILE") and not ssl.get_default_verify_paths().cafile:
-    for candidate in ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/certs/ca-bundle.crt"):
+    for candidate in (
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/ssl/certs/ca-bundle.crt",
+    ):
         if os.path.exists(candidate):
             os.environ["SSL_CERT_FILE"] = candidate
             break
 
-import qqbot.plugins  # noqa: E402
-from nonebot import get_driver, init, load_plugin  # noqa: E402
-from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter  # noqa: E402
-from nonebot.adapters.qq import Adapter as QQAdapter  # noqa: E402
+from nonebot import get_driver, init, load_plugin
+from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
+from nonebot.adapters.qq import Adapter as QQAdapter
+
+import qqbot.plugins
 
 init()
 

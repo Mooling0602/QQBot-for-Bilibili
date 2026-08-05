@@ -1,7 +1,7 @@
 """状态检查命令（管理员专属）：@机器人 发送 /检查状态 时返回机器人运行状态。"""
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from nonebot import on_command
 from nonebot.adapters import Bot, Event
@@ -11,6 +11,8 @@ from qqbot.core.permissions import admin_only
 from qqbot.core.version import get_version
 
 START_TIME = time.time()
+# 由容器或宿主机的 TZ 环境变量决定；无本地时区信息时才退回 Asia/Shanghai。
+LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone(timedelta(hours=8))
 
 check_status = on_command(
     "检查状态",
@@ -22,7 +24,7 @@ check_status = on_command(
 
 
 def _format_start_time() -> str:
-    dt = datetime.fromtimestamp(START_TIME)
+    dt = datetime.fromtimestamp(START_TIME, tz=LOCAL_TZ)
     return f"{dt.year}.{dt.month}.{dt.day} {dt.hour:02d}:{dt.minute:02d}"
 
 

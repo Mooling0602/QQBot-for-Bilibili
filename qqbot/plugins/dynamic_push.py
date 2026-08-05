@@ -1,32 +1,32 @@
-"""动态推送：轮询已开启 dynamic_push 的群所关注的 UP 主，新动态推送到群。
-
-- 后台 asyncio 任务（机器人启动时开始）
-- 轮询间隔：10s 基础，出错翻倍退避（上限 160s），各 mid 独立
-- 群配置：config/<群号>/config.yml → dynamic_push.{enable, mids, prompt, add_url}
-- 新动态：截图 → 组装消息（prompt + 图片 + 摘要 + 直链）→ 发送到对应群
-"""
+"""按群订阅时间推送关注时间线中的新动态。"""
 
 import asyncio
 import base64
 import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 from bilibili_feed_api.client import BiliClient
-from bilibili_feed_api.dynamic import DynamicWatcher
 from bilibili_feed_api.feed_all_watcher import FeedAllWatcher
-from bilibili_feed_api.screenshot import fetch_screenshot
 from nonebot import get_driver, logger
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
 
 from qqbot.core import features
 from qqbot.core.config import CONFIG
-from qqbot.core.group_config import GROUP_CONFIG_ROOT, load_group_config
+from qqbot.core.group_config import (
+    GROUP_CONFIG_ROOT,
+    load_group_config,
+    save_group_config,
+)
+from qqbot.core.screenshot import fetch_dynamic_screenshot
 
 driver = get_driver()
 
 FEATURE_KEY = "dynamic_push"
 DEFAULT_PROMPT = "你关注的 UP 主发布了新动态～"
 DYNAMIC_URL = "https://t.bilibili.com/{id}"
+SCREENSHOT_CACHE_MAX_ITEMS = 128
 
 # dry-run：只记录日志不实际发送（调试用）
 DRY_RUN = bool(CONFIG.get("push_dry_run", False))
@@ -37,30 +37,192 @@ _BILIBILI_CONFIG = CONFIG.get("bilibili") or {}
 _SCREENSHOT_URL = (CONFIG.get("screenshot") or {}).get("url", "")
 
 
-def _collect_watch() -> dict[str, list[str]]:
-    """扫描全部群配置，返回 mid → 启用了该功能的群列表。"""
-    watch: dict[str, list[str]] = {}
+@dataclass(frozen=True)
+class Subscription:
+    group_id: str
+    subscribed_at: float
+
+
+@dataclass(frozen=True)
+class DynamicNotice:
+    dynamic_id: str
+    mid: str
+    published_at: float
+    title: str
+
+    @property
+    def url(self) -> str:
+        return DYNAMIC_URL.format(id=self.dynamic_id)
+
+
+_mid_locks: dict[str, asyncio.Lock] = {}
+_screenshot_cache: OrderedDict[str, bytes] = OrderedDict()
+_screenshot_tasks: dict[str, asyncio.Task[bytes]] = {}
+_screenshot_lock = asyncio.Lock()
+
+
+def _as_timestamp(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError):
+        return None
+    return timestamp if timestamp > 0 else None
+
+
+def _as_mapping(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _published_at(item: dict) -> float | None:
+    modules = _as_mapping(item.get("modules"))
+    author = _as_mapping(modules.get("module_author"))
+    return _as_timestamp(author.get("pub_ts"))
+
+
+def _collect_watch() -> dict[str, list[Subscription]]:
+    """扫描群配置，返回 mid 到群订阅起点的映射。
+
+    旧配置没有订阅时间时，在首次发现时以当前时间补齐，避免升级后推送历史动态。
+    """
+    watch: dict[str, list[Subscription]] = {}
     if not GROUP_CONFIG_ROOT.exists():
         return watch
+
+    now = time.time()
     for group_dir in GROUP_CONFIG_ROOT.iterdir():
         if not group_dir.is_dir():
             continue
         group_id = group_dir.name
         cfg = load_group_config(group_id)
         item = cfg.get(FEATURE_KEY) or {}
-        if not item.get("enable"):
+        if not isinstance(item, dict) or not item.get("enable"):
             continue
-        for mid in item.get("mids") or []:
-            watch.setdefault(str(mid), []).append(group_id)
+
+        mids = [str(mid).strip() for mid in item.get("mids") or []]
+        mids = [mid for mid in mids if mid]
+        raw_times = item.get("mid_subscribed_at") or {}
+        subscribed_at = dict(raw_times) if isinstance(raw_times, dict) else {}
+        changed = not isinstance(raw_times, dict)
+
+        for mid in mids:
+            timestamp = _as_timestamp(subscribed_at.get(mid))
+            if timestamp is None:
+                timestamp = now
+                subscribed_at[mid] = timestamp
+                changed = True
+            watch.setdefault(mid, []).append(
+                Subscription(group_id=group_id, subscribed_at=timestamp)
+            )
+
+        active_mids = set(mids)
+        stale_mids = set(subscribed_at) - active_mids
+        if stale_mids:
+            for mid in stale_mids:
+                subscribed_at.pop(mid, None)
+            changed = True
+
+        if changed:
+            updated_item = dict(item)
+            updated_item["mid_subscribed_at"] = subscribed_at
+            cfg[FEATURE_KEY] = updated_item
+            save_group_config(group_id, cfg)
+
     return watch
 
 
 def _group_item(group_id: str) -> dict:
     cfg = load_group_config(group_id)
-    return cfg.get(FEATURE_KEY) or {}
+    item = cfg.get(FEATURE_KEY) or {}
+    return item if isinstance(item, dict) else {}
 
 
-async def _send_to_group(bot: Bot, group_id: str, mid: str, item: dict) -> None:
+def _group_still_subscribes(group_id: str, mid: str) -> bool:
+    item = _group_item(group_id)
+    return bool(
+        item.get("enable") and mid in {str(value) for value in item.get("mids") or []}
+    )
+
+
+def _extract_title(item: dict) -> str | None:
+    modules = _as_mapping(item.get("modules"))
+    dynamic = _as_mapping(modules.get("module_dynamic"))
+    major = _as_mapping(dynamic.get("major"))
+    candidates = (
+        _as_mapping(major.get("archive")).get("title"),
+        _as_mapping(major.get("article")).get("title"),
+        _as_mapping(major.get("opus")).get("title"),
+        _as_mapping(dynamic.get("desc")).get("text"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            title = " ".join(candidate.split())
+            if title:
+                return title[:120]
+    return None
+
+
+def _build_notice(mid: str, item: dict) -> DynamicNotice | None:
+    dynamic_id = str(item.get("id_str") or "").strip()
+    published_at = _published_at(item)
+    title = _extract_title(item)
+    if not dynamic_id or published_at is None or not title:
+        return None
+    return DynamicNotice(
+        dynamic_id=dynamic_id,
+        mid=mid,
+        published_at=published_at,
+        title=title,
+    )
+
+
+def _candidate_id(item: dict) -> str:
+    return str(item.get("id_str") or "").strip()
+
+
+async def _get_screenshot(dynamic_id: str) -> bytes:
+    """获取同一动态的共享截图，合并并发请求并保留有限的内存缓存。"""
+    async with _screenshot_lock:
+        cached = _screenshot_cache.get(dynamic_id)
+        if cached is not None:
+            _screenshot_cache.move_to_end(dynamic_id)
+            return cached
+
+        task = _screenshot_tasks.get(dynamic_id)
+        if task is None:
+            task = asyncio.create_task(
+                fetch_dynamic_screenshot(dynamic_id, remote_url=_SCREENSHOT_URL or None)
+            )
+            _screenshot_tasks[dynamic_id] = task
+
+    try:
+        screenshot = await task
+        if not screenshot:
+            raise RuntimeError("截图服务返回空内容")
+        async with _screenshot_lock:
+            _screenshot_cache[dynamic_id] = screenshot
+            _screenshot_cache.move_to_end(dynamic_id)
+            while len(_screenshot_cache) > SCREENSHOT_CACHE_MAX_ITEMS:
+                _screenshot_cache.popitem(last=False)
+        return screenshot
+    finally:
+        if task.done():
+            async with _screenshot_lock:
+                if _screenshot_tasks.get(dynamic_id) is task:
+                    _screenshot_tasks.pop(dynamic_id, None)
+
+
+async def _send_to_group(
+    bot: Bot,
+    group_id: str,
+    notice: DynamicNotice,
+    screenshot: bytes | None,
+) -> bool:
+    """发送完整动态消息；没有截图时强制附加直链。"""
+    if not _group_still_subscribes(group_id, notice.mid):
+        return True
+
     group_cfg = _group_item(group_id)
     prompt = (
         group_cfg.get("prompt")
@@ -69,27 +231,103 @@ async def _send_to_group(bot: Bot, group_id: str, mid: str, item: dict) -> None:
     )
     add_url = bool(group_cfg.get("add_url", features.feature_add_url(FEATURE_KEY)))
 
-    messages = Message(prompt)
-    # 截图成功：只发图片；截图失败：用文字描述兜底
-    try:
-        png = await fetch_screenshot(
-            item["id_str"], remote_url=_SCREENSHOT_URL or None
+    message = Message(prompt)
+    message += Message(f"\n{notice.title}")
+    if screenshot is not None:
+        message += MessageSegment.image(
+            f"base64://{base64.b64encode(screenshot).decode()}"
         )
-        messages += MessageSegment.image(f"base64://{base64.b64encode(png).decode()}")
-    except Exception as e:
-        logger.warning(f"群 {group_id} 动态截图失败: {e}")
-        messages += Message(DynamicWatcher.describe(item))
-    if add_url:
-        messages += Message(f"\n{DYNAMIC_URL.format(id=item['id_str'])}")
+    if add_url or screenshot is None:
+        message += Message(f"\n{notice.url}")
 
     if DRY_RUN:
-        logger.info(f"[dry-run] 将推送到群 {group_id}: {messages}")
-        return
+        logger.info(f"[dry-run] 将推送到群 {group_id}: {message}")
+        return True
     try:
-        await bot.call_api("send_group_msg", group_id=int(group_id), message=messages)
-        logger.info(f"已推送动态到群 {group_id}: {item.get('id_str')}")
-    except Exception as e:
-        logger.error(f"推送群 {group_id} 失败: {e}")
+        await bot.call_api("send_group_msg", group_id=int(group_id), message=message)
+        logger.info(f"已推送动态到群 {group_id}: {notice.dynamic_id}")
+        return True
+    except Exception as error:  # noqa: BLE001
+        logger.error(f"推送群 {group_id} 动态 {notice.dynamic_id} 失败: {error}")
+        return False
+
+
+async def _send_parse_error(bot: Bot, group_id: str, dynamic_id: str) -> bool:
+    """对可判定为订阅后新动态、但内容无法解析的情况作一次简短提示。"""
+    if DRY_RUN:
+        logger.info(f"[dry-run] 群 {group_id} 动态 {dynamic_id} 内容解析失败")
+        return True
+    try:
+        await bot.call_api(
+            "send_group_msg",
+            group_id=int(group_id),
+            message=Message("检测到一条新动态，但内容解析失败，请管理员检查。"),
+        )
+        return True
+    except Exception as error:  # noqa: BLE001
+        logger.error(f"通知群 {group_id} 动态 {dynamic_id} 解析失败时出错: {error}")
+        return False
+
+
+def _mid_lock(mid: str) -> asyncio.Lock:
+    return _mid_locks.setdefault(mid, asyncio.Lock())
+
+
+async def _process_mid(
+    watcher: FeedAllWatcher,
+    mid: str,
+    items: list[dict],
+) -> None:
+    """同一 mid 的候选动态串行处理，不同 mid 可并行。"""
+    async with _mid_lock(mid):
+        for item in items:
+            dynamic_id = _candidate_id(item)
+            if not dynamic_id:
+                continue
+
+            published_at = _published_at(item)
+            if published_at is None:
+                logger.warning(f"动态 {dynamic_id} 缺少发布时间，无法判定订阅范围")
+                watcher.acknowledge(mid, [dynamic_id])
+                continue
+
+            # 每条候选动态重新读取订阅快照，避免配置命令与轮询交错时遗漏新订阅的群。
+            subscriptions = _collect_watch().get(mid, [])
+            targets = [
+                subscription
+                for subscription in subscriptions
+                if published_at > subscription.subscribed_at
+            ]
+            if not targets:
+                watcher.acknowledge(mid, [dynamic_id])
+                continue
+
+            bot = _pick_bot()
+            if not bot:
+                logger.warning(
+                    f"动态 {dynamic_id} 到达时没有可用 OneBot 机器人，将在下轮重试"
+                )
+                return
+
+            notice = _build_notice(mid, item)
+            if notice is None:
+                logger.warning(f"动态 {dynamic_id} 缺少可展示标题，发送解析失败提示")
+                for subscription in targets:
+                    await _send_parse_error(bot, subscription.group_id, dynamic_id)
+                watcher.acknowledge(mid, [dynamic_id])
+                continue
+
+            screenshot: bytes | None = None
+            try:
+                screenshot = await _get_screenshot(notice.dynamic_id)
+            except Exception as error:  # noqa: BLE001
+                logger.warning(
+                    f"动态 {notice.dynamic_id} 截图失败，将发送标题和直链: {error}"
+                )
+
+            for subscription in targets:
+                await _send_to_group(bot, subscription.group_id, notice, screenshot)
+            watcher.acknowledge(mid, [dynamic_id])
 
 
 async def _poll_loop() -> None:
@@ -98,43 +336,46 @@ async def _poll_loop() -> None:
         proxy=_BILIBILI_CONFIG.get("proxy") or None,
         proxy_auth=_BILIBILI_CONFIG.get("proxy_auth") or None,
     )
-    await asyncio.sleep(5)  # 等机器人就绪
-
-    async def on_new(mid: str, item: dict) -> None:
-        watch = _collect_watch()
-        groups = watch.get(mid, [])
-        if not groups:
-            return
-        logger.info(f"UP {mid} 新动态 {item.get('id_str')}，推送到群 {groups}")
-        for group_id in groups:
-            bot = _pick_bot()
-            if bot:
-                await _send_to_group(bot, group_id, mid, item)
-
-    watcher = FeedAllWatcher(
-        client, mids=[], state_dir=Path.cwd() / "cache", on_new=on_new
-    )
     interval = FeedAllWatcher.BASE_POLL_SEC
     last_poll = 0.0
+    await asyncio.sleep(5)  # 等机器人就绪
     logger.info("动态推送轮询任务已启动（feed/all）")
 
-    while True:
-        try:
-            watch = _collect_watch()
-            mids = list(watch.keys())
-            if not mids:
-                await asyncio.sleep(5)
-                continue
-            watcher._mids = mids  # 动态同步目标 mid（群配置可能变化）
-            now = time.time()
-            if now - last_poll >= interval:
-                last_poll = now
-                await watcher.poll()
-                interval = FeedAllWatcher.BASE_POLL_SEC
-        except Exception as e:
-            interval = min(interval * 2, FeedAllWatcher.MAX_POLL_SEC)
-            logger.warning(f"feed/all 轮询失败: {e}，退避至 {interval}s")
-        await asyncio.sleep(1)
+    # QQBot 以群订阅时间过滤历史动态，因此不能使用 watcher 的默认首轮基线。
+    watcher = FeedAllWatcher(
+        client,
+        mids=[],
+        state_dir=Path.cwd() / "cache",
+        baseline_first=False,
+    )
+    try:
+        while True:
+            try:
+                watch = _collect_watch()
+                if not watch:
+                    await asyncio.sleep(5)
+                    continue
+
+                now = time.time()
+                if now - last_poll >= interval:
+                    last_poll = now
+                    candidates = await watcher.fetch_unseen(watch)
+                    tasks = [
+                        _process_mid(watcher, mid, items)
+                        for mid, items in candidates.items()
+                    ]
+                    if tasks:
+                        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+                        for outcome in outcomes:
+                            if isinstance(outcome, Exception):
+                                logger.error(f"动态处理任务失败: {outcome}")
+                    interval = FeedAllWatcher.BASE_POLL_SEC
+            except Exception as error:  # noqa: BLE001
+                interval = min(interval * 2, FeedAllWatcher.MAX_POLL_SEC)
+                logger.warning(f"feed/all 轮询失败: {error}，退避至 {interval}s")
+            await asyncio.sleep(1)
+    finally:
+        await client.close()
 
 
 def _pick_bot() -> Bot | None:
@@ -145,8 +386,8 @@ def _pick_bot() -> Bot | None:
         for bot in get_bots().values():
             if bot.type == "OneBot V11" or "OneBot" in str(bot.type):
                 return bot  # type: ignore
-    except Exception:
-        pass
+    except Exception as error:  # noqa: BLE001
+        logger.warning(f"获取 OneBot 连接状态失败: {error}")
     return None
 
 

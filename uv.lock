@@ -41,7 +41,7 @@ wheels = [
 [[package]]
 name = "bilibili-feed-api"
 version = "0.1.0"
-source = { git = "https://github.com/Mooling0602/bilibili-feed-apis.git#83a4a794dddd98d8fa81a5eaadd37ab6d31ede5b" }
+source = { git = "https://github.com/Mooling0602/bilibili-feed-apis.git#681c37aec5e272e66e0e1a74adca2d6d8d87c60b" }
 dependencies = [
     { name = "curl-cffi" },
     { name = "httpx" },
@@ -1083,6 +1083,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bilibili-feed-api" },
+    { name = "httpx" },
     { name = "nonebot-adapter-onebot" },
     { name = "nonebot-adapter-qq" },
     { name = "nonebot2", extra = ["fastapi", "httpx", "websockets"] },
@@ -1093,6 +1094,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bilibili-feed-api", git = "https://github.com/Mooling0602/bilibili-feed-apis.git" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "nonebot-adapter-onebot", specifier = ">=2.4.0" },
     { name = "nonebot-adapter-qq", specifier = ">=1.7.0" },
     { name = "nonebot2", extras = ["fastapi", "httpx", "websockets"], specifier = ">=2.5.0" },
