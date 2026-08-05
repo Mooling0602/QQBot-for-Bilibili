@@ -7,8 +7,12 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
-from bilibili_feed_api.client import BiliClient
-from bilibili_feed_api.feed_all_watcher import FeedAllWatcher
+from bilibili_feed_api import (
+    BiliClient,
+    DynamicWatcher,
+    FeedAllWatcher,
+    is_following,
+)
 from nonebot import get_driver, logger
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
 
@@ -27,6 +31,7 @@ FEATURE_KEY = "dynamic_push"
 DEFAULT_PROMPT = "你关注的 UP 主发布了新动态～"
 DYNAMIC_URL = "https://t.bilibili.com/{id}"
 SCREENSHOT_CACHE_MAX_ITEMS = 128
+FOLLOWING_RECHECK_SEC = 600
 
 # dry-run：只记录日志不实际发送（调试用）
 DRY_RUN = bool(CONFIG.get("push_dry_run", False))
@@ -55,10 +60,17 @@ class DynamicNotice:
         return DYNAMIC_URL.format(id=self.dynamic_id)
 
 
+@dataclass(frozen=True)
+class FollowingStatus:
+    follows: bool
+    checked_at: float
+
+
 _mid_locks: dict[str, asyncio.Lock] = {}
 _screenshot_cache: OrderedDict[str, bytes] = OrderedDict()
 _screenshot_tasks: dict[str, asyncio.Task[bytes]] = {}
 _screenshot_lock = asyncio.Lock()
+_following_status: dict[str, FollowingStatus] = {}
 
 
 def _as_timestamp(value: object) -> float | None:
@@ -273,8 +285,98 @@ def _mid_lock(mid: str) -> asyncio.Lock:
     return _mid_locks.setdefault(mid, asyncio.Lock())
 
 
+async def _resolve_dynamic_sources(
+    client: BiliClient,
+    mids: list[str],
+    *,
+    now: float | None = None,
+) -> tuple[list[str], list[str]]:
+    """Choose feed/all for followed uploaders and feed/space for the rest.
+
+    Following relationships are refreshed periodically so a manual follow takes
+    effect without restarting the bot, while avoiding one relation request per
+    polling cycle and MID.
+    """
+    normalized_mids = list(dict.fromkeys(str(mid) for mid in mids))
+    if not client.has_sessdata:
+        return [], normalized_mids
+
+    checked_now = time.time() if now is None else now
+    to_check = [
+        mid
+        for mid in normalized_mids
+        if (status := _following_status.get(mid)) is None
+        or checked_now - status.checked_at >= FOLLOWING_RECHECK_SEC
+    ]
+
+    async def check_following(mid: str) -> None:
+        previous = _following_status.get(mid)
+        try:
+            follows = await is_following(client, mid)
+        except Exception as error:
+            logger.warning(f"检查 mid {mid} 的关注关系失败: {error}")
+            raise
+
+        _following_status[mid] = FollowingStatus(
+            follows=follows,
+            checked_at=checked_now,
+        )
+        if not follows and (previous is None or previous.follows):
+            logger.warning(
+                f"登录账号未关注 mid {mid}；请使用该 B 站账号手动关注后再等待状态复查，"
+                "当前将回退到 feed/space。"
+            )
+        elif follows and previous is not None and not previous.follows:
+            logger.info(f"mid {mid} 已被登录账号手动关注，切换至 feed/all")
+
+    if to_check:
+        await asyncio.gather(*(check_following(mid) for mid in to_check))
+
+    feed_all_mids = [
+        mid for mid in normalized_mids if _following_status[mid].follows
+    ]
+    feed_space_mids = [
+        mid for mid in normalized_mids if not _following_status[mid].follows
+    ]
+    return feed_all_mids, feed_space_mids
+
+
+async def _fetch_candidates(
+    feed_all_watcher: FeedAllWatcher,
+    space_watcher: DynamicWatcher,
+    feed_all_mids: list[str],
+    feed_space_mids: list[str],
+) -> dict[str, list[dict]]:
+    """Fetch each source once per cycle and merge candidates by MID."""
+    candidates: dict[str, list[dict]] = {}
+    if feed_all_mids:
+        try:
+            candidates.update(await feed_all_watcher.fetch_unseen(feed_all_mids))
+        except Exception as error:
+            logger.warning(f"feed/all 轮询失败: {error}")
+            raise
+
+    if not feed_space_mids:
+        return candidates
+
+    space_results = await asyncio.gather(
+        *(space_watcher.fetch_unseen(mid) for mid in feed_space_mids),
+        return_exceptions=True,
+    )
+    for mid, result in zip(feed_space_mids, space_results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning(
+                f"feed/space 查询 mid {mid} 失败: {result}；"
+                "请检查服务器网络环境或稍后重试。"
+            )
+            raise result
+        if result:
+            candidates[mid] = result
+    return candidates
+
+
 async def _process_mid(
-    watcher: FeedAllWatcher,
+    watcher: FeedAllWatcher | DynamicWatcher,
     mid: str,
     items: list[dict],
 ) -> None:
@@ -339,12 +441,23 @@ async def _poll_loop() -> None:
     interval = FeedAllWatcher.BASE_POLL_SEC
     last_poll = 0.0
     await asyncio.sleep(5)  # 等机器人就绪
-    logger.info("动态推送轮询任务已启动（feed/all）")
+    if client.has_sessdata:
+        logger.info("动态推送轮询任务已启动（优先 feed/all，未关注时回退 feed/space）")
+    else:
+        logger.warning(
+            "动态推送未配置 SESSDATA，将仅使用 feed/space；"
+            "如遇 412 风控，请管理员自行检查服务器网络环境。"
+        )
 
     # QQBot 以群订阅时间过滤历史动态，因此不能使用 watcher 的默认首轮基线。
-    watcher = FeedAllWatcher(
+    feed_all_watcher = FeedAllWatcher(
         client,
         mids=[],
+        state_dir=Path.cwd() / "cache",
+        baseline_first=False,
+    )
+    space_watcher = DynamicWatcher(
+        client,
         state_dir=Path.cwd() / "cache",
         baseline_first=False,
     )
@@ -359,9 +472,26 @@ async def _poll_loop() -> None:
                 now = time.time()
                 if now - last_poll >= interval:
                     last_poll = now
-                    candidates = await watcher.fetch_unseen(watch)
+                    mids = list(watch)
+                    feed_all_mids, feed_space_mids = await _resolve_dynamic_sources(
+                        client,
+                        mids,
+                        now=now,
+                    )
+                    candidates = await _fetch_candidates(
+                        feed_all_watcher,
+                        space_watcher,
+                        feed_all_mids,
+                        feed_space_mids,
+                    )
                     tasks = [
-                        _process_mid(watcher, mid, items)
+                        _process_mid(
+                            feed_all_watcher
+                            if mid in feed_all_mids
+                            else space_watcher,
+                            mid,
+                            items,
+                        )
                         for mid, items in candidates.items()
                     ]
                     if tasks:
@@ -372,7 +502,7 @@ async def _poll_loop() -> None:
                     interval = FeedAllWatcher.BASE_POLL_SEC
             except Exception as error:  # noqa: BLE001
                 interval = min(interval * 2, FeedAllWatcher.MAX_POLL_SEC)
-                logger.warning(f"feed/all 轮询失败: {error}，退避至 {interval}s")
+                logger.warning(f"动态轮询失败: {error}，退避至 {interval}s")
             await asyncio.sleep(1)
     finally:
         await client.close()

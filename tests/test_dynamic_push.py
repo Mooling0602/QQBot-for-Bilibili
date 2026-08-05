@@ -21,6 +21,31 @@ class FakeBot:
         self.calls.append(kwargs)
 
 
+class FakeBiliClient:
+    def __init__(self, has_sessdata: bool) -> None:
+        self.has_sessdata = has_sessdata
+
+
+class FakeFeedAllWatcher:
+    def __init__(self, items: dict[str, list[dict]]) -> None:
+        self.items = items
+        self.calls: list[list[str]] = []
+
+    async def fetch_unseen(self, mids: list[str]) -> dict[str, list[dict]]:
+        self.calls.append(mids)
+        return {mid: self.items[mid] for mid in mids if mid in self.items}
+
+
+class FakeSpaceWatcher:
+    def __init__(self, items: dict[str, list[dict]]) -> None:
+        self.items = items
+        self.calls: list[str] = []
+
+    async def fetch_unseen(self, mid: str) -> list[dict]:
+        self.calls.append(mid)
+        return self.items.get(mid, [])
+
+
 def make_notice() -> dynamic_push.DynamicNotice:
     return dynamic_push.DynamicNotice(
         dynamic_id="100",
@@ -34,6 +59,7 @@ class DynamicPushTests(unittest.TestCase):
     def setUp(self) -> None:
         dynamic_push._screenshot_cache.clear()
         dynamic_push._screenshot_tasks.clear()
+        dynamic_push._following_status.clear()
 
     def test_screenshot_cache_merges_same_dynamic_requests(self) -> None:
         calls = 0
@@ -119,6 +145,67 @@ class DynamicPushTests(unittest.TestCase):
         message = bot.calls[0]["message"]
         self.assertEqual([segment.type for segment in message], ["text", "text", "text"])
         self.assertEqual(message[2].data["text"], "\nhttps://t.bilibili.com/100")
+
+    def test_source_selection_without_sessdata_uses_feed_space(self) -> None:
+        sources = asyncio.run(
+            dynamic_push._resolve_dynamic_sources(
+                cast(dynamic_push.BiliClient, FakeBiliClient(False)),
+                ["42", "43", "42"],
+                now=100.0,
+            )
+        )
+
+        self.assertEqual(sources, ([], ["42", "43"]))
+
+    def test_source_selection_uses_feed_all_after_manual_follow(self) -> None:
+        calls: list[str] = []
+        follows = False
+
+        async def fake_is_following(_client: object, mid: str) -> bool:
+            calls.append(mid)
+            return follows
+
+        client = cast(dynamic_push.BiliClient, FakeBiliClient(True))
+        with patch.object(dynamic_push, "is_following", new=fake_is_following):
+            first = asyncio.run(
+                dynamic_push._resolve_dynamic_sources(client, ["42"], now=100.0)
+            )
+            cached = asyncio.run(
+                dynamic_push._resolve_dynamic_sources(client, ["42"], now=200.0)
+            )
+            follows = True
+            refreshed = asyncio.run(
+                dynamic_push._resolve_dynamic_sources(
+                    client,
+                    ["42"],
+                    now=100.0 + dynamic_push.FOLLOWING_RECHECK_SEC,
+                )
+            )
+
+        self.assertEqual(first, ([], ["42"]))
+        self.assertEqual(cached, ([], ["42"]))
+        self.assertEqual(refreshed, (["42"], []))
+        self.assertEqual(calls, ["42", "42"])
+
+    def test_candidate_fetch_uses_the_selected_source_once(self) -> None:
+        feed_all = FakeFeedAllWatcher({"42": [{"id_str": "all"}]})
+        feed_space = FakeSpaceWatcher({"43": [{"id_str": "space"}]})
+
+        candidates = asyncio.run(
+            dynamic_push._fetch_candidates(
+                cast(dynamic_push.FeedAllWatcher, feed_all),
+                cast(dynamic_push.DynamicWatcher, feed_space),
+                ["42"],
+                ["43"],
+            )
+        )
+
+        self.assertEqual(
+            candidates,
+            {"42": [{"id_str": "all"}], "43": [{"id_str": "space"}]},
+        )
+        self.assertEqual(feed_all.calls, [["42"]])
+        self.assertEqual(feed_space.calls, ["43"])
 
 
 if __name__ == "__main__":
