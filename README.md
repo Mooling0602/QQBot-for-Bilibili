@@ -15,6 +15,12 @@
 | QQ 官方机器人 | 备用 | 适配器已注册，但当前动态推送发送链路仅支持 OneBot v11 |
 | 开播提醒 | 未实现 | `live_alert` 目前只有配置定义，不会启动监听或发送消息 |
 
+## 直播提醒规划
+
+常规的 `live_alert` 将按订阅 MID 轮询直播状态，适用于任意可查询的 UP 主。B 站没有面向普通订阅者、可主动推送任意 UP 主开播事件的官方接口。
+
+对于愿意自行授权的主播，可在后续增加独立的官方直播开放平台提供方：开发者应用使用自身的 `app_id` 和密钥，结合该主播提供的 `room_owner_auth_code` 启动官方 WebSocket 会话，接收开播和下播事件。该路径只能覆盖已授权的房间，不能替代普通 MID 订阅；授权码和应用密钥只能作为部署侧运行时机密保存，不能出现在群配置、命令参数或日志中。
+
 ## 工作区依赖
 
 开发三个项目时建议保持如下兄弟目录结构：
@@ -204,6 +210,7 @@ docker run -d --name qqbot-for-bilibili \
 - [NapCat 部署说明](docs/napcat-deployment.md)
 - [QQBot 容器部署说明](docs/qqbot-docker-deploy.md)
 - [命令规范](docs/qqbot-command-spec.md)
+- [直播通知实现计划](docs/live-notify-plan.md)
 - [QQ 机器人框架调研](docs/qqbot-frameworks.md)
 
 ## 许可与第三方组件
