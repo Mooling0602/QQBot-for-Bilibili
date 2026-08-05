@@ -4,7 +4,7 @@ import asyncio
 import base64
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -33,9 +33,20 @@ driver = get_driver()
 FEATURE_KEY = "dynamic_push"
 DEFAULT_PROMPT = "你关注的 UP 主发布了新动态～"
 DYNAMIC_URL = "https://t.bilibili.com/{id}"
+UNKNOWN_TYPE_LABEL = "（未知动态类型）"
 SCREENSHOT_CACHE_MAX_ITEMS = 128
 FOLLOWING_RECHECK_SEC = 600
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone(timedelta(hours=8))
+TYPE_LABELS = {
+    "DYNAMIC_TYPE_DRAW": "图文动态",
+    "DYNAMIC_TYPE_OPUS": "图文动态",
+    "DYNAMIC_TYPE_WORD": "文字动态",
+    "DYNAMIC_TYPE_AV": "视频动态",
+    "DYNAMIC_TYPE_ARTICLE": "专栏动态",
+    "DYNAMIC_TYPE_FORWARD": "转发动态",
+    "DYNAMIC_TYPE_LIVE_RCMD": "直播动态",
+    "DYNAMIC_TYPE_MUSIC": "音乐动态",
+}
 
 # dry-run：只记录日志不实际发送（调试用）
 DRY_RUN = bool(CONFIG.get("push_dry_run", False))
@@ -57,7 +68,7 @@ class DynamicNotice:
     dynamic_id: str
     mid: str
     published_at: float
-    title: str
+    title: str | None
 
     @property
     def url(self) -> str:
@@ -176,14 +187,15 @@ def _extract_title(item: dict) -> str | None:
             title = " ".join(candidate.split())
             if title:
                 return title[:120]
-    return None
+    dynamic_type = item.get("type")
+    return TYPE_LABELS.get(dynamic_type) if isinstance(dynamic_type, str) else None
 
 
 def _build_notice(mid: str, item: dict) -> DynamicNotice | None:
     dynamic_id = str(item.get("id_str") or "").strip()
     published_at = _published_at(item)
     title = _extract_title(item)
-    if not dynamic_id or published_at is None or not title:
+    if not dynamic_id or published_at is None:
         return None
     return DynamicNotice(
         dynamic_id=dynamic_id,
@@ -191,6 +203,17 @@ def _build_notice(mid: str, item: dict) -> DynamicNotice | None:
         published_at=published_at,
         title=title,
     )
+
+
+def _notice_with_delivery_title(
+    notice: DynamicNotice, screenshot: bytes | None
+) -> DynamicNotice | None:
+    """Use a neutral label only when the screenshot makes titleless content usable."""
+    if notice.title:
+        return notice
+    if screenshot is None:
+        return None
+    return replace(notice, title=UNKNOWN_TYPE_LABEL)
 
 
 def _candidate_id(item: dict) -> str:
@@ -276,7 +299,8 @@ async def _send_to_group(
     add_url = bool(group_cfg.get("add_url", features.feature_add_url(FEATURE_KEY)))
 
     message = Message(prompt)
-    message += Message(f"\n{notice.title}")
+    if notice.title:
+        message += Message(f"\n{notice.title}")
     if screenshot is not None:
         message += MessageSegment.image(
             f"base64://{base64.b64encode(screenshot).decode()}"
@@ -450,7 +474,7 @@ async def _process_mid(
 
             notice = _build_notice(mid, item)
             if notice is None:
-                logger.warning(f"动态 {dynamic_id} 缺少可展示标题，发送解析失败提示")
+                logger.warning(f"动态 {dynamic_id} 缺少有效元数据，发送解析失败提示")
                 for subscription in targets:
                     await _send_parse_error(bot, subscription.group_id, dynamic_id)
                 watcher.acknowledge(mid, [dynamic_id])
@@ -461,8 +485,16 @@ async def _process_mid(
                 screenshot = await _get_screenshot(notice.dynamic_id)
             except Exception as error:  # noqa: BLE001
                 logger.warning(
-                    f"动态 {notice.dynamic_id} 截图失败，将发送标题和直链: {error}"
+                    f"动态 {notice.dynamic_id} 截图失败，将尝试回退为可用文字和直链: {error}"
                 )
+
+            notice = _notice_with_delivery_title(notice, screenshot)
+            if notice is None:
+                logger.warning(f"动态 {dynamic_id} 缺少可展示内容，发送解析失败提示")
+                for subscription in targets:
+                    await _send_parse_error(bot, subscription.group_id, dynamic_id)
+                watcher.acknowledge(mid, [dynamic_id])
+                continue
 
             for subscription in targets:
                 await _send_to_group(bot, subscription.group_id, notice, screenshot)

@@ -109,6 +109,44 @@ class DynamicPushTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertIn("42", saved[0]["dynamic_push"]["mid_subscribed_at"])
 
+    def test_graphic_dynamic_uses_type_label_when_it_has_no_title(self) -> None:
+        item = {
+            "id_str": "100",
+            "type": "DYNAMIC_TYPE_DRAW",
+            "modules": {
+                "module_author": {"pub_ts": 200},
+                "module_dynamic": {"major": {"draw": {"items": [{"src": "x"}]}}},
+            },
+        }
+
+        notice = dynamic_push._build_notice("42", item)
+
+        self.assertIsNotNone(notice)
+        assert notice is not None
+        self.assertEqual(notice.title, "图文动态")
+
+    def test_unknown_titleless_dynamic_uses_label_when_screenshot_succeeds(
+        self,
+    ) -> None:
+        item = {
+            "id_str": "100",
+            "type": "DYNAMIC_TYPE_UNKNOWN",
+            "modules": {
+                "module_author": {"pub_ts": 200},
+                "module_dynamic": {"major": {}},
+            },
+        }
+
+        notice = dynamic_push._build_notice("42", item)
+
+        assert notice is not None
+        self.assertIsNone(notice.title)
+        labeled = dynamic_push._notice_with_delivery_title(notice, b"png")
+        self.assertIsNotNone(labeled)
+        assert labeled is not None
+        self.assertEqual(labeled.title, "（未知动态类型）")
+        self.assertIsNone(dynamic_push._notice_with_delivery_title(notice, None))
+
     def test_screenshot_success_respects_add_url_and_includes_title(self) -> None:
         bot = FakeBot()
         config = {"enable": True, "mids": ["42"], "prompt": "提示词", "add_url": False}
